@@ -1,5 +1,13 @@
 package org.wickedsource.docxstamper.processor;
 
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
 import org.docx4j.wml.Comments;
 import org.slf4j.Logger;
@@ -11,6 +19,7 @@ import org.wickedsource.docxstamper.api.UnresolvedExpressionException;
 import org.wickedsource.docxstamper.api.commentprocessor.ICommentProcessor;
 import org.wickedsource.docxstamper.api.coordinates.ParagraphCoordinates;
 import org.wickedsource.docxstamper.api.coordinates.RunCoordinates;
+import org.wickedsource.docxstamper.api.coordinates.TableCoordinates;
 import org.wickedsource.docxstamper.el.ExpressionResolver;
 import org.wickedsource.docxstamper.el.ExpressionUtil;
 import org.wickedsource.docxstamper.proxy.ProxyBuilder;
@@ -22,19 +31,13 @@ import org.wickedsource.docxstamper.util.ParagraphWrapper;
 import org.wickedsource.docxstamper.util.walk.BaseCoordinatesWalker;
 import org.wickedsource.docxstamper.util.walk.CoordinatesWalker;
 
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
  * Allows registration of ICommentProcessor objects. Each registered
  * ICommentProcessor must implement an interface which has to be specified at
  * registration time. Provides several getter methods to access the registered
  * ICommentProcessors.
  */
-public class CommentProcessorRegistry {
+public class CommentProcessorRegistry implements ICommentProcessorRegistry {
 
 	private Logger logger = LoggerFactory.getLogger(CommentProcessorRegistry.class);
 
@@ -58,6 +61,10 @@ public class CommentProcessorRegistry {
 		this.expressionResolver = expressionResolver;
 	}
 
+	public ExpressionResolver getExpressionResolver() {
+		return this.expressionResolver;
+	}
+
 	public void registerCommentProcessor(Class<?> interfaceClass,
 										 ICommentProcessor commentProcessor) {
 		this.commentProcessorInterfaces.put(commentProcessor, interfaceClass);
@@ -76,30 +83,69 @@ public class CommentProcessorRegistry {
 	 * @param <T>         type of the contextRoot object.
 	 */
 	public <T> void runProcessors(final WordprocessingMLPackage document, final T contextRoot) {
-		final Map<BigInteger, CommentWrapper> comments = CommentUtil.getComments(document);
+		List<Info> actions = prepareRunProcessors(document);
 
-		CoordinatesWalker walker = new BaseCoordinatesWalker(document) {
-
-			@Override
-			protected void onParagraph(ParagraphCoordinates paragraphCoordinates) {
-				runProcessorsOnParagraphComment(document, comments, contextRoot, paragraphCoordinates);
-				runProcessorsOnInlineContent(contextRoot, paragraphCoordinates);
+		for (Info info : actions) {
+			if (info.getRunCoordinates() == null) {
+				runProcessorsOnParagraphComment(document, info.getCommentWrapper(), info.getComment(), contextRoot, info.getParagrapheCoordinates());
+				runProcessorsOnInlineContent(contextRoot, info.getParagrapheCoordinates());
+			} else {
+				runProcessorsOnRunComment(document, info.getCommentWrapper(), info.getComment(), contextRoot, info.getRunCoordinates(), info.getParagrapheCoordinates());
 			}
-
-			@Override
-			protected CommentWrapper onRun(RunCoordinates runCoordinates,
-										   ParagraphCoordinates paragraphCoordinates) {
-				return runProcessorsOnRunComment(document, comments, contextRoot, runCoordinates,
-						paragraphCoordinates);
-			}
-
 		};
-		walker.walk();
 
 		for (ICommentProcessor processor : commentProcessors) {
 			processor.commitChanges(document);
 		}
 
+	}
+
+
+	/**
+	 * Lets each registered ICommentProcessor have a run on the specified docx
+	 * document. At the end of the document the commit method is called for each
+	 * ICommentProcessor. The ICommentProcessors are run in the order they were
+	 * registered.
+	 *
+	 * @param document    the docx document over which to run the registered ICommentProcessors.
+	 * @param contextRoot the context root object against which to resolve expressions within the
+	 *                    comments.
+	 * @param <T>         type of the contextRoot object.
+	 */
+	public <T> List<Info> prepareRunProcessors(final WordprocessingMLPackage document) {
+		final Map<BigInteger, CommentWrapper> comments = CommentUtil.getComments(document);
+		final List<Info> commentInformations = new ArrayList<>();
+		final Set<BigInteger> processedComment = new HashSet<>();
+
+		CoordinatesWalker walker = new BaseCoordinatesWalker(document) {
+			@Override
+			protected void onParagraph(ParagraphCoordinates paragraphCoordinates) {
+				Info info = gatherInformations(document, comments, paragraphCoordinates);
+				if (info != null && processedComment.add(info.getCommentWrapper().getComment().getId())) commentInformations.add(info);
+			}
+
+			@Override
+			protected CommentWrapper onRun(RunCoordinates runCoordinates, ParagraphCoordinates paragraphCoordinates) {
+				Info info = gatherInformations(document, comments, runCoordinates, paragraphCoordinates);
+				if (info != null && processedComment.add(info.getCommentWrapper().getComment().getId())) commentInformations.add(info);
+				return null;
+			}
+		};
+		walker.walk();
+		return commentInformations;
+	}
+
+
+	private void notifyProcessor(TableCoordinates tableCoordinates) {
+		for (ICommentProcessor processor : commentProcessors) {
+			processor.onTable(tableCoordinates);
+		}
+	}
+
+	private void notifyProcessor(ParagraphCoordinates paragrapheCoordinates) {
+		for (ICommentProcessor processor : commentProcessors) {
+			processor.onParagraphe(paragrapheCoordinates);
+		}
 	}
 
 	/**
@@ -167,17 +213,9 @@ public class CommentProcessorRegistry {
 	 * @param <T>                  the type of the context root object.
 	 */
 	private <T> void runProcessorsOnParagraphComment(final WordprocessingMLPackage document,
-													 final Map<BigInteger, CommentWrapper> comments, T contextRoot,
+													 CommentWrapper commentWrapper, String commentString,
+													 T contextRoot,
 													 ParagraphCoordinates paragraphCoordinates) {
-		Comments.Comment comment = CommentUtil
-				.getCommentFor(paragraphCoordinates.getParagraph(), document);
-		if (comment == null) {
-			// no comment to process
-			return;
-		}
-
-		String commentString = CommentUtil.getCommentString(comment);
-
 		ProxyBuilder<T> proxyBuilder = new ProxyBuilder<T>()
 				.withRoot(contextRoot);
 
@@ -186,8 +224,6 @@ public class CommentProcessorRegistry {
 			proxyBuilder.withInterface(commentProcessorInterface, processor);
 			processor.setCurrentParagraphCoordinates(paragraphCoordinates);
 		}
-
-		CommentWrapper commentWrapper = comments.get(comment.getId());
 
 		try {
 			T contextRootProxy = proxyBuilder.build();
@@ -213,17 +249,26 @@ public class CommentProcessorRegistry {
 
 	}
 
+	/**
+	 * Retrieve all the information that will be usefull later on filtering the document
+	 * {@link ICommentProcessor}s.
+	 *
+	 * @param document             the word document.
+	 * @param comments             the comments within the document.
+	 * @param contextRoot          the context root against which to evaluate the expressions.
+	 * @param paragraphCoordinates the paragraph whose comments to evaluate.
+	 * @param <T>                  the type of the context root object.
+	 */
+	private <T> Info gatherInformations(final WordprocessingMLPackage document,
+													 final Map<BigInteger, CommentWrapper> comments,
+													 final ParagraphCoordinates paragraphCoordinates) {
+		return gatherInformations(document, comments, null, paragraphCoordinates);
+	}
+
 	private <T> CommentWrapper runProcessorsOnRunComment(final WordprocessingMLPackage document,
-														 final Map<BigInteger, CommentWrapper> comments, T contextRoot, RunCoordinates runCoordinates,
+														CommentWrapper commentWrapper, String commentString,
+														T contextRoot, RunCoordinates runCoordinates,
 														 ParagraphCoordinates paragraphCoordinates) {
-		Comments.Comment comment = CommentUtil.getCommentAround(runCoordinates.getRun(), document);
-		if (comment == null) {
-			// no comment to process
-			return null;
-		}
-
-		String commentString = CommentUtil.getCommentString(comment);
-
 		ProxyBuilder<T> proxyBuilder = new ProxyBuilder<T>()
 				.withRoot(contextRoot);
 
@@ -232,11 +277,11 @@ public class CommentProcessorRegistry {
 			proxyBuilder.withInterface(commentProcessorInterface, processor);
 			processor.setCurrentParagraphCoordinates(paragraphCoordinates);
 			processor.setCurrentRunCoordinates(runCoordinates);
+			processor.setRegistry(this);
 		}
 
 		try {
 			T contextRootProxy = proxyBuilder.build();
-			CommentWrapper commentWrapper = comments.get(comment.getId());
 
 			try {
 				expressionResolver.resolveExpression(commentString, contextRootProxy);
@@ -261,6 +306,51 @@ public class CommentProcessorRegistry {
 		}
 
 		return null;
+	}
+
+
+	private <T> Info gatherInformations(final WordprocessingMLPackage document,
+														 final Map<BigInteger, CommentWrapper> comments,
+														 final RunCoordinates runCoordinates,
+														 final ParagraphCoordinates paragraphCoordinates) {
+		Comments.Comment comment;
+		if (runCoordinates != null) {
+			comment = CommentUtil.getCommentAround(runCoordinates.getRun(), document);
+		} else {
+			comment = CommentUtil.getCommentFor(paragraphCoordinates.getParagraph(), document);
+		}
+		if (comment == null) {
+			// no comment to process
+			return null;
+		}
+
+		String commentStringTemp = CommentUtil.getCommentString(comment);
+		if (commentStringTemp != null) commentStringTemp = commentStringTemp.replaceAll("[„“‚‘]", "'");
+		final String commentString = commentStringTemp;
+
+		final CommentWrapper commentWrapper = comments.get(comment.getId());
+
+		return new Info() {
+			@Override
+			public ParagraphCoordinates getParagrapheCoordinates() {
+				return paragraphCoordinates;
+			}
+
+			@Override
+			public RunCoordinates getRunCoordinates() {
+				return runCoordinates;
+			}
+
+			@Override
+			public CommentWrapper getCommentWrapper() {
+				return commentWrapper;
+			}
+
+			@Override
+			public String getComment() {
+				return commentString;
+			}
+		};
 	}
 
 	public boolean isFailOnInvalidExpression() {

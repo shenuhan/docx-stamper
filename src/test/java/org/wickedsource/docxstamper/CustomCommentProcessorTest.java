@@ -12,6 +12,8 @@ import org.junit.Test;
 import org.wickedsource.docxstamper.api.commentprocessor.ICommentProcessor;
 import org.wickedsource.docxstamper.api.coordinates.ParagraphCoordinates;
 import org.wickedsource.docxstamper.api.coordinates.RunCoordinates;
+import org.wickedsource.docxstamper.api.coordinates.TableCoordinates;
+import org.wickedsource.docxstamper.processor.CommentProcessorRegistry;
 
 public class CustomCommentProcessorTest extends AbstractDocx4jTest {
 
@@ -69,6 +71,21 @@ public class CustomCommentProcessorTest extends AbstractDocx4jTest {
         public void visitParagraph() {
             visitedParagraphs.add(currentParagraph);
         }
+
+		@Override
+		public void setRegistry(CommentProcessorRegistry registry) {
+
+		}
+
+		@Override
+		public void onParagraphe(ParagraphCoordinates paragrapheCoordinates) {
+
+		}
+
+		@Override
+		public void onTable(TableCoordinates tableCoordinates) {
+
+		}
     }
 
 

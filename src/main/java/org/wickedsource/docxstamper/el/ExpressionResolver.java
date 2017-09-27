@@ -1,5 +1,8 @@
 package org.wickedsource.docxstamper.el;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
@@ -12,12 +15,32 @@ public class ExpressionResolver {
 
     private final EvaluationContextConfigurer evaluationContextConfigurer;
 
+    private final Map<String, Object> variables = new HashMap<>();
+
     public ExpressionResolver() {
         this.evaluationContextConfigurer = new NoOpEvaluationContextConfigurer();
     }
 
     public ExpressionResolver(EvaluationContextConfigurer evaluationContextConfigurer) {
         this.evaluationContextConfigurer = evaluationContextConfigurer;
+    }
+
+    /**
+     * Allow to add variables in the context
+     * @param name
+     * @param value
+     */
+    public void addVariable(String name, Object value) {
+    	variables.put(name, value);
+    }
+
+    /**
+     * Allow to remove variables in the context
+     * @param name
+     * @param value
+     */
+    public void removeVariable(String name) {
+    	variables.remove(name);
     }
 
     /**
@@ -34,8 +57,8 @@ public class ExpressionResolver {
         ExpressionParser parser = new SpelExpressionParser();
         StandardEvaluationContext evaluationContext = new StandardEvaluationContext(contextRoot);
         evaluationContextConfigurer.configureEvaluationContext(evaluationContext);
+    	evaluationContext.setVariables(variables);
         Expression expression = parser.parseExpression(expressionString);
         return expression.getValue(evaluationContext);
     }
-
 }

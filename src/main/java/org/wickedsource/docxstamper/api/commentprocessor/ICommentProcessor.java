@@ -3,6 +3,8 @@ package org.wickedsource.docxstamper.api.commentprocessor;
 import org.docx4j.openpackaging.packages.WordprocessingMLPackage;
 import org.wickedsource.docxstamper.api.coordinates.ParagraphCoordinates;
 import org.wickedsource.docxstamper.api.coordinates.RunCoordinates;
+import org.wickedsource.docxstamper.api.coordinates.TableCoordinates;
+import org.wickedsource.docxstamper.processor.CommentProcessorRegistry;
 
 /**
  * <p>
@@ -71,5 +73,26 @@ public interface ICommentProcessor {
      * Resets all state in the comment processor so that it can be re-used in another stamping process.
      */
     void reset();
+
+    /**
+     * give the regisrty to the processor for advanced processor task
+     *
+     * @param the current running registry
+     */
+    void setRegistry(CommentProcessorRegistry registry);
+
+    /**
+     * notify the processor where new paragraphe is processed
+     *
+     * @param the coordinates
+     */
+    void onParagraphe(ParagraphCoordinates paragrapheCoordinates);
+
+    /**
+     * notify the processor where new table is processed
+     *
+     * @param the coordinates
+     */
+    void onTable(TableCoordinates tableCoordinates);
 
 }
